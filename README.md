@@ -101,6 +101,17 @@ Example:
 cargo run  --release --features evm --bin ezkl fullprove -D ./examples/onnx/examples/1l_relu/input.json -M ./examples/onnx/examples/1l_relu/network.onnx 
 ```
 
+Note that the above command performs a single-party trusted setup of 2 ^ 23 powers of tau. To perform the setup once and re-use the SRS during subsequent runs, first generate and save the SRS with this command:
+
+```bash
+cargo run --release --features evm --bin unsafe_setup 23 out_23.srs
+```
+
+You may now use the `--srs-file` flag with the `fullprove` subcommand as such:
+
+```bash
+cargo run  --release --features evm --bin ezkl fullprove -D --srs-file out_23.srs ./examples/onnx/examples/1l_relu/input.json -M ./examples/onnx/examples/1l_relu/network.onnx 
+```
 
 ### general usage 🔧
 

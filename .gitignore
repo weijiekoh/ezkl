@@ -3,6 +3,7 @@ data
 *.pf
 *.vk
 *.params
+*.srs
 *~
 \#*\#
 .DS_Store

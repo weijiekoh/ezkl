@@ -129,15 +129,19 @@ pub fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                     let snarks = [gen_application_snark(&params_app, &data, &args)?];
                     info!("Application proof took {}", now.elapsed().as_secs());
 
+                    info!("Generating aggregation circuit...");
                     let agg_circuit = AggregationCircuit::new(&params, snarks)?;
+                    info!("Generating aggregation pk...");
                     let pk = gen_pk(&params, &agg_circuit)?;
 
+                    info!("Generating aggregation EVM verifier...");
                     let deployment_code = gen_aggregation_evm_verifier(
                         &params,
                         pk.get_vk(),
                         AggregationCircuit::num_instance(),
                         AggregationCircuit::accumulator_indices(),
                     )?;
+                    info!("Generating aggregation proof...");
                     let now = Instant::now();
                     let proof = gen_kzg_proof::<
                         _,
