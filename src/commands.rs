@@ -112,6 +112,9 @@ pub enum Commands {
         /// The path to the .onnx model file
         #[arg(short = 'M', long)]
         model: String,
+        /// The path to the SRS file
+        #[arg(short = 's', long, default_value="")]
+        srs_file: String,
         //todo: optional Params
         #[arg(
             long,

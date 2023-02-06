@@ -27,6 +27,7 @@ use log::{info, trace};
 #[cfg(feature = "evm")]
 use snark_verifier::system::halo2::transcript::evm::EvmTranscript;
 use std::error::Error;
+use std::fs::File;
 #[cfg(feature = "evm")]
 use std::time::Instant;
 use tabled::Table;
@@ -66,6 +67,7 @@ pub fn run(args: Cli) -> Result<(), Box<dyn Error>> {
             ref data,
             model: _,
             pfsys,
+            ref srs_file,
         } => {
             // A direct proof
 
@@ -104,11 +106,20 @@ pub fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                 }
                 #[cfg(feature = "evm")]
                 ProofSystem::KZG => {
-                    // We will need aggregator k > application k > bits
-                    //		    let application_logrows = args.logrows; //bits + 1;
-                    let aggregation_logrows = args.logrows + 6;
+                    let params = if srs_file.len() == 0 {
+                        println!("Generating SRS...");
+                        // We will need aggregator k > application k > bits
+                        //		    let application_logrows = args.logrows; //bits + 1;
+                        let aggregation_logrows = args.logrows + 6;
+                        gen_srs(aggregation_logrows)
+                    } else {
+                        println!("Loading SRS from {}", srs_file);
+                        let mut file = File::open(srs_file)?;
+                        let p = ParamsKZG::<Bn256>::read(&mut file).unwrap();
+                        // TODO: check that p is large enough
+                        p
+                    };
 
-                    let params = gen_srs(aggregation_logrows);
                     let params_app = {
                         let mut params = params.clone();
                         params.downsize(args.logrows);
@@ -117,8 +128,10 @@ pub fn run(args: Cli) -> Result<(), Box<dyn Error>> {
                     let now = Instant::now();
                     let snarks = [gen_application_snark(&params_app, &data, &args)?];
                     info!("Application proof took {}", now.elapsed().as_secs());
+
                     let agg_circuit = AggregationCircuit::new(&params, snarks)?;
                     let pk = gen_pk(&params, &agg_circuit)?;
+
                     let deployment_code = gen_aggregation_evm_verifier(
                         &params,
                         pk.get_vk(),

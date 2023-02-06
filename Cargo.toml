@@ -58,6 +58,12 @@ test = false
 bench = false
 required-features = ["ezkl"]
 
+[[bin]]
+name = "unsafe_setup"
+test = false
+bench = false
+required-features = ["evm"]
+
 [features]
 default = ["ezkl"]
 dev-graph = ["halo2_proofs/dev-graph", "plotters"]
