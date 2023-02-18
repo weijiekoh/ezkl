@@ -139,7 +139,7 @@ impl Model {
     pub fn from_ezkl_conf(args: Cli) -> Result<Self, Box<dyn Error>> {
         let visibility = VarVisibility::from_args(args.clone())?;
         match args.command {
-            Commands::Table { model } => Model::new(
+            Commands::Table { model } | Commands::Mock { model, .. } => Model::new(
                 model,
                 args.scale,
                 args.bits,
@@ -149,46 +149,20 @@ impl Model {
                 Mode::Table,
                 visibility,
             ),
-            Commands::Mock { model, .. } => Model::new(
+            Commands::CreateEVMVerifier { model, .. }
+            | Commands::Prove { model, .. }
+            | Commands::Verify { model, .. }
+            | Commands::Aggregate { model, .. } => Model::new(
                 model,
                 args.scale,
                 args.bits,
                 args.logrows,
                 args.max_rotations,
                 args.tolerance,
-                Mode::Mock,
+                Mode::Table,
                 visibility,
             ),
-            Commands::Fullprove { model, .. } => Model::new(
-                model,
-                args.scale,
-                args.bits,
-                args.logrows,
-                args.max_rotations,
-                args.tolerance,
-                Mode::FullProve,
-                visibility,
-            ),
-            Commands::Prove { model, .. } => Model::new(
-                model,
-                args.scale,
-                args.bits,
-                args.logrows,
-                args.max_rotations,
-                args.tolerance,
-                Mode::Prove,
-                visibility,
-            ),
-            Commands::Verify { model, .. } => Model::new(
-                model,
-                args.scale,
-                args.bits,
-                args.logrows,
-                args.max_rotations,
-                args.tolerance,
-                Mode::Verify,
-                visibility,
-            ),
+            _ => panic!(),
         }
     }
 
@@ -321,14 +295,14 @@ impl Model {
         }
     }
 
-    /// Configures a `BTreeMap` of 'fuseable' operations. These correspond to operations that are represented in
-    /// the `circuit::fused` module. A single configuration is output, representing the amalgamation of these operations into
+    /// Configures a [BTreeMap] of operations that can be constrained using polynomials. These correspond to operations that are represented in
+    /// the `circuit::polynomial` module. A single configuration is output, representing the amalgamation of these operations into
     /// a single Halo2 gate.
     /// # Arguments
     ///
-    /// * `nodes` - A `BTreeMap` of (node index, [Node] pairs). The [Node] must represent a fuseable op.
+    /// * `nodes` - A [BTreeMap] of (node index, [Node] pairs). The [Node] must represent a polynomial op.
     /// * `meta` - Halo2 ConstraintSystem.
-    /// * `advices` - A `VarTensor` holding columns of advices. Must be sufficiently large to configure all the passed `nodes`.
+    /// * `vars` - [ModelVars] for the model.
     fn conf_poly_ops<F: FieldExt + TensorType>(
         &self,
         nodes: &BTreeMap<&usize, &Node>,
@@ -431,7 +405,7 @@ impl Model {
     ///
     /// * `node` - The [Node] must represent a lookup based op.
     /// * `meta` - Halo2 ConstraintSystem.
-    /// * `advices` - A `VarTensor` holding columns of advices. Must be sufficiently large to configure the passed `node`.
+    /// * `vars` - [ModelVars] for the model.
     fn conf_table<F: FieldExt + TensorType>(
         &self,
         node: &Node,
@@ -533,7 +507,7 @@ impl Model {
     ///
     /// * `config` - [NodeConfig] the single region we will layout.
     /// * `layouter` - Halo2 Layouter.
-    /// * `inputs` - `BTreeMap` of values to feed into the NodeConfig, can also include previous intermediate results, i.e the output of other nodes.
+    /// * `inputs` - [BTreeMap] of values to feed into the [NodeConfig], can also include previous intermediate results, i.e the output of other nodes.
     fn layout_config<F: FieldExt + TensorType>(
         &self,
         layouter: &mut impl Layouter<F>,
@@ -583,11 +557,11 @@ impl Model {
     /// a) independent lookup operations (i.e operations that don't feed into one another so can be processed in parallel).
     /// b) operations that can be fused together, i.e the output of one op might feed into another.
     /// The logic for bucket assignment is thus: we assign all data intake nodes to the 0 bucket.
-    /// We iterate over each node in turn. If the node is a fuseable op, assign to it the maximum bucket of it's inputs.
+    /// We iterate over each node in turn. If the node is a polynomial op, assign to it the maximum bucket of it's inputs.
     /// If the node is a lookup table, assign to it the maximum bucket of it's inputs incremented by 1.
     /// # Arguments
     ///
-    /// * `nodes` - `BTreeMap` of (node index, [Node]) pairs.
+    /// * `nodes` - [BTreeMap] of (node index, [Node]) pairs.
     pub fn assign_execution_buckets(
         mut nodes: BTreeMap<usize, Node>,
     ) -> Result<NodeGraph, GraphError> {
@@ -774,5 +748,46 @@ impl Model {
         }
         // add 1 for layer output
         maximum_number_inputs + 1
+    }
+
+    /// Number of instances used by the circuit
+    pub fn num_instances(&self) -> (usize, Vec<Vec<usize>>) {
+        // for now the number of instances corresponds to the number of graph / model outputs
+        let mut num_instances = 0;
+        let mut instance_shapes = vec![];
+        if self.visibility.input.is_public() {
+            num_instances += self.num_inputs();
+            instance_shapes.extend(self.input_shapes());
+        }
+        if self.visibility.output.is_public() {
+            num_instances += self.num_outputs();
+            instance_shapes.extend(self.output_shapes());
+        }
+        (num_instances, instance_shapes)
+    }
+
+    /// Number of advice used by the circuit
+    pub fn num_advice(&self) -> usize {
+        // TODO: extract max number of params in a given fused layer
+        if self.visibility.params.is_public() {
+            // this is the maximum of variables in non-fused layer, and the maximum of variables (non-params) in fused layers
+            max(self.max_node_vars_non_fused(), self.max_node_vars_fused())
+        } else {
+            // this is the maximum of variables in non-fused layer, and the maximum of variables (non-params) in fused layers
+            //  + the max number of params in a fused layer
+            max(
+                self.max_node_vars_non_fused(),
+                self.max_node_params() + self.max_node_vars_fused(),
+            )
+        }
+    }
+
+    /// Number of fixed columns used by the circuit
+    pub fn num_fixed(&self) -> usize {
+        let mut num_fixed = 0;
+        if self.visibility.params.is_public() {
+            num_fixed += self.max_node_params();
+        }
+        num_fixed
     }
 }
